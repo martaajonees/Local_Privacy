@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "clip_protocol"
-version = "2.3"
+version = "2.4"
 authors = [
   { name="Marta Jones González", email="martajon10@gmail.com" },
 ]
