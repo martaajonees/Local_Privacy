@@ -1,4 +1,4 @@
-# CLiP Protocol — Evaluation
+# Evaluation
 
 This folder contains the experimental evaluation of **CLiP (Context-aware Local information Protection)**, a privacy-preserving protocol for estimating frequencies over sequential data in Learning Analytics, based on Local Differential Privacy (LDP) and probabilistic sketches (**PCMeS** and **PHCMeS**).
 
@@ -58,9 +58,6 @@ Compares CLiP's dynamic, personalized privacy-budget optimization against Apple'
 
 ### `experiment_5.py` — Application of CLiP on real data
 Applies the full CLiP protocol to the real-world `AOIdataset` (20 students), using student S11 as the reference subject for the setup stage. Reports the optimized privacy budget ε and maximum estimation error (PE_max) under both **low** and **high** privacy levels for every student.
-
-### `experiment_7.py`
-Additional experiment extending the evaluation suite (refer to the corresponding section/appendix of the article for details not covered in Experiments 1–5).
 
 ## Outputs
 
