@@ -1,37 +1,4 @@
-"""
-Experiment: CLiP (personalized epsilon) vs Apple's baseline (fixed epsilon)
-across dataset sizes, run separately for every synthetic distribution
-(d1-d4).
 
-Reviewer comment addressed here:
-
-    "The central claim of RQ2 rests on a single experimental condition"
-    "This can be solved by extending experiment 4 to cover the skewed
-    distributions (d2-d4) ..."
-
-Previously this script only ran for one distribution, chosen interactively
-via input() at runtime, and only reported d1 in Table 6. This version loops
-over DISTRIBUTIONS = ["1", "2", "3", "4"] automatically -- d3 and d4 are
-heavily skewed, which is exactly where a general "CLiP beats the
-fixed-budget baseline" claim needs to hold.
-
-Output: one consolidated CSV with named columns
-    distribution, dataset_size, method, epsilon, PE_max
-instead of the previous wide table with packed "epsilon / error" strings,
-so it can be pivoted/plotted directly (e.g. to reproduce Table 6 for each
-distribution).
-
-Repetitions and variability (reviewer comment addressed here):
-
-    "repetition/variance reporting is inconsistent (present in
-    Experiments 1-2, absent in 3-5)"
-
-Each (distribution, dataset_size, method) combination is now run
-N_REPEATS times with different random seeds. The consolidated output
-reports mean, standard deviation, and a 95% confidence interval (t-based)
-for both epsilon and PE_max, instead of a single run per combination.
-A second CSV with every individual run is also saved for full traceability.
-"""
 
 import argparse
 import json
@@ -188,6 +155,7 @@ def run_repeated(method_key, method_label, k, m, e_max, df, distribution, size, 
             "repeat": rep,
             "epsilon": epsilon,
             "PE_max": pe_max,
+            "seed": seed
         })
 
     return runs
