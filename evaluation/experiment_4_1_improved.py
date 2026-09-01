@@ -14,7 +14,6 @@ from tqdm import tqdm
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 from clip_protocol.utils.utils import display_results, get_real_frequency
 from clip_protocol.count_mean.private_cms_client import run_private_cms_client
-from clip_protocol.hadamard_count_mean.private_hcms_client import run_private_hcms_client
 
 DISTRIBUTIONS = ["1", "2", "3", "4"]
 DATASET_SIZES = [3000, 4000, 6000, 7000]
@@ -22,7 +21,7 @@ DATASET_SIZES = [3000, 4000, 6000, 7000]
 N_OPTUNA_TRIALS = 20
 ERROR_VALUE = 0.05
 TOLERANCE = 0.01
-PRIVACY_LEVEL = "low"
+PRIVACY_LEVEL = "high"
 
 # Number of repeated runs per (distribution, dataset_size, method)
 N_REPEATS = 5
@@ -60,11 +59,20 @@ def optimize_epsilon(k, m, df, e_max, privacy_level, error_value, tolerance, see
         raise ValueError(f"Unknown privacy level: {privacy_level}")
 
     matching_trial = {"trial": None}
+    all_trial_pes = []
 
     def objective(trial):
         epsilon = round(trial.suggest_float("e", 0.1, e_max, step=0.1), 4)
         table = run_client(epsilon, k, m, df, seed=seed)
         max_error = get_max_error_from_table(table)
+
+        for pe_index, row in enumerate(table):
+            all_trial_pes.append({
+                "trial": trial.number,
+                "epsilon": epsilon,
+                "pe_index": pe_index,
+                "PE": float(row[-1].strip("%"))
+            })
 
         trial.set_user_attr("epsilon", epsilon)
         trial.set_user_attr("max_error", max_error)
@@ -80,7 +88,7 @@ def optimize_epsilon(k, m, df, e_max, privacy_level, error_value, tolerance, see
     study.optimize(objective, n_trials=N_OPTUNA_TRIALS)
 
     final_trial = matching_trial["trial"] or study.best_trial
-    return final_trial.user_attrs["epsilon"], final_trial.user_attrs["max_error"]
+    return final_trial.user_attrs["epsilon"], final_trial.user_attrs["max_error"], all_trial_pes
 
 
 def confidence_interval(values, confidence=CONFIDENCE_LEVEL):
@@ -104,16 +112,29 @@ def run_repeated(method_label, k, m, e_max, df, distribution, size, tuned):
     optimize_epsilon.
     """
     runs = []
+    all_trial_pes = []
+
     for rep in range(N_REPEATS):
         seed = BASE_SEED + rep
 
         if tuned:
-            epsilon, pe_max = optimize_epsilon(
+            epsilon, pe_max, all_trial_pes_i = optimize_epsilon(
                 k, m, df, e_max, PRIVACY_LEVEL, ERROR_VALUE, TOLERANCE, seed=seed
             )
+            for pe in all_trial_pes_i:
+                pe.update({
+                    "distribution": f"d{distribution}",
+                    "dataset_size": size,
+                    "method": method_label,
+                    "repeat": rep,
+                    "seed": seed
+                })
+
+            all_trial_pes.extend(all_trial_pes_i)
         else:
             table = run_client(e_max, k, m, df, seed=seed)
             epsilon, pe_max = e_max, get_max_error_from_table(table)
+
 
         runs.append({
             "distribution": f"d{distribution}",
@@ -125,7 +146,7 @@ def run_repeated(method_label, k, m, e_max, df, distribution, size, tuned):
             "seed": seed
         })
 
-    return runs
+    return runs, all_trial_pes
 
 
 def aggregate_runs(runs_df):
@@ -166,6 +187,7 @@ def run_for_distribution(distribution, datasets, params, output_dir):
     'distribution' column.
     """
     all_runs = []
+    all_trial_pes = []
 
     method_params = params[distribution]
     k = method_params["k"]
@@ -189,10 +211,13 @@ def run_for_distribution(distribution, datasets, params, output_dir):
                 method="Apple"
             )
 
-            all_runs.extend(run_repeated(
+            runs, trial_pes = run_repeated(
                 "Apple", k, m, e_max, df,
                 distribution, size, tuned=False,
-            ))
+            )
+
+            all_runs.extend(runs)
+            all_trial_pes.extend(trial_pes)
 
             pbar.update(N_REPEATS)
 
@@ -201,11 +226,14 @@ def run_for_distribution(distribution, datasets, params, output_dir):
                 dataset=size,
                 method="CLiP"
             )
-            
-            all_runs.extend(run_repeated(
+
+            runs, trial_pes = run_repeated(
                 "CLiP-tuned", k, m, e_max, df,
                 distribution, size, tuned=True,
-            ))
+            )
+
+            all_runs.extend(runs)
+            all_trial_pes.extend(trial_pes)
 
             pbar.update(N_REPEATS)
 
@@ -217,9 +245,11 @@ def run_for_distribution(distribution, datasets, params, output_dir):
 
     runs_df.to_csv(raw_path, index=False)
     summary_df.to_csv(summary_path, index=False)
+    
 
     print(f"Saved: {raw_path}")
     print(f"Saved: {summary_path}")
+    
 
     return runs_df, summary_df
 
