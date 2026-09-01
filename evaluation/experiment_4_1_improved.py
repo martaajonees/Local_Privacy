@@ -9,22 +9,15 @@ import numpy as np
 import optuna
 import pandas as pd
 from scipy import stats
+from tqdm import tqdm
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 from clip_protocol.utils.utils import display_results, get_real_frequency
 from clip_protocol.count_mean.private_cms_client import run_private_cms_client
 from clip_protocol.hadamard_count_mean.private_hcms_client import run_private_hcms_client
 
-# All four synthetic distributions must be covered, not just d1.
-# d3 and d4 are heavily skewed, which is precisely where a general claim
-# of "CLiP outperforms the fixed-budget baseline" needs to be tested.
 DISTRIBUTIONS = ["1", "2", "3", "4"]
 DATASET_SIZES = [3000, 4000, 6000, 7000]
-
-METHOD_LABELS = {
-    "PCMeS": "Apple",
-    "PHCMS": "CLiP",
-}
 
 N_OPTUNA_TRIALS = 20
 ERROR_VALUE = 0.05
@@ -38,46 +31,25 @@ CONFIDENCE_LEVEL = 0.95
 
 
 def filter_dataframe(df):
-    """Rename the raw columns to the expected (user, value) schema."""
     df.columns = ["user", "value"]
     return df
 
 
-def run_client(epsilon, k, m, df, privacy_method, seed=None):
-    """Run a single client (PCMeS or PHCMS) and return its error table.
-
-    `seed` reseeds numpy's global RNG right before the call so repeated
-    runs of the same configuration produce independent noise draws.
-    """
+def run_client(epsilon, k, m, df, seed=None):
     if seed is not None:
         np.random.seed(seed)
 
-    if privacy_method == "PCMeS":
-        _, _, df_estimated = run_private_cms_client(k, m, epsilon, df)
-    elif privacy_method == "PHCMS":
-        _, _, df_estimated = run_private_hcms_client(k, m, epsilon, df)
-    else:
-        raise ValueError(f"Unknown privacy method: {privacy_method}")
+    _, _, df_estimated = run_private_cms_client(k, m, epsilon, df)
 
     return display_results(get_real_frequency(df), df_estimated)
 
 
 def get_max_error_from_table(table):
-    """Extract the maximum per-AOI percentage error from an error table."""
     percentage_errors = [float(row[-1].strip("%")) for row in table]
     return max(percentage_errors)
 
 
-def optimize_epsilon(k, m, df, e_max, privacy_level, error_value, tolerance, privacy_method, seed=None):
-    """Search for the epsilon whose maximum AOI error falls inside the
-    target band defined by (error_value, tolerance, privacy_level).
-
-    Stops early as soon as a candidate epsilon lands inside the target
-    band; otherwise falls back to the best trial found within
-    N_OPTUNA_TRIALS attempts.
-
-    Returns (epsilon, max_error).
-    """
+def optimize_epsilon(k, m, df, e_max, privacy_level, error_value, tolerance, seed=None):
     if privacy_level == "high":
         objective_high = (error_value + tolerance) * 100
         objective_low = (error_value - tolerance) * 100
@@ -91,7 +63,7 @@ def optimize_epsilon(k, m, df, e_max, privacy_level, error_value, tolerance, pri
 
     def objective(trial):
         epsilon = round(trial.suggest_float("e", 0.1, e_max, step=0.1), 4)
-        table = run_client(epsilon, k, m, df, privacy_method, seed=seed)
+        table = run_client(epsilon, k, m, df, seed=seed)
         max_error = get_max_error_from_table(table)
 
         trial.set_user_attr("epsilon", epsilon)
@@ -112,8 +84,6 @@ def optimize_epsilon(k, m, df, e_max, privacy_level, error_value, tolerance, pri
 
 
 def confidence_interval(values, confidence=CONFIDENCE_LEVEL):
-    """95% t-based confidence interval half-width for a small sample.
-    Returns (mean, std, ci_low, ci_high)."""
     values = np.asarray(values, dtype=float)
     n = len(values)
     mean = float(np.mean(values))
@@ -127,14 +97,11 @@ def confidence_interval(values, confidence=CONFIDENCE_LEVEL):
     return mean, std, mean - margin, mean + margin
 
 
-def run_repeated(method_key, method_label, k, m, e_max, df, distribution, size, tuned):
-    """Run one (method, dataset_size) combination N_REPEATS times with
-    different seeds and return the raw per-run records.
-
+def run_repeated(method_label, k, m, e_max, df, distribution, size, tuned):
+    """
     `tuned=False` runs the Apple baseline at the fixed epsilon `e_max`.
     `tuned=True` runs CLiP's personalized-epsilon search via
-    optimize_epsilon. Both are repeated identically so their variability
-    is directly comparable.
+    optimize_epsilon.
     """
     runs = []
     for rep in range(N_REPEATS):
@@ -142,10 +109,10 @@ def run_repeated(method_key, method_label, k, m, e_max, df, distribution, size, 
 
         if tuned:
             epsilon, pe_max = optimize_epsilon(
-                k, m, df, e_max, PRIVACY_LEVEL, ERROR_VALUE, TOLERANCE, method_key, seed=seed
+                k, m, df, e_max, PRIVACY_LEVEL, ERROR_VALUE, TOLERANCE, seed=seed
             )
         else:
-            table = run_client(e_max, k, m, df, method_key, seed=seed)
+            table = run_client(e_max, k, m, df, seed=seed)
             epsilon, pe_max = e_max, get_max_error_from_table(table)
 
         runs.append({
@@ -200,31 +167,57 @@ def run_for_distribution(distribution, datasets, params, output_dir):
     """
     all_runs = []
 
-    for method_key in ["PCMeS", "PHCMS"]:
-        method_params = params[method_key]
-        k = method_params["k"]
-        m = method_params["m"]
-        e_max = method_params["e_r"]
+    method_params = params[distribution]
+    k = method_params["k"]
+    m = method_params["m"]
+    e_max = method_params["e"]
+
+    total_runs = len(datasets) * 2 * N_REPEATS
+
+    with tqdm(
+        total=total_runs,
+        desc=f"Distribución d{distribution}",
+        unit="run"
+    ) as pbar:
 
         for size, raw_df in datasets.items():
             df = filter_dataframe(raw_df.copy())
 
+            # Apple: fixed epsilon
+            pbar.set_postfix(
+                dataset=size,
+                method="Apple"
+            )
+
             all_runs.extend(run_repeated(
-                method_key, METHOD_LABELS[method_key], k, m, e_max, df,
+                "Apple", k, m, e_max, df,
                 distribution, size, tuned=False,
             ))
+
+            pbar.update(N_REPEATS)
+
+            #CLiP: tuned epsilon
+            pbar.set_postfix(
+                dataset=size,
+                method="CLiP"
+            )
+            
             all_runs.extend(run_repeated(
-                method_key, f"{METHOD_LABELS[method_key]} (CLiP-tuned)", k, m, e_max, df,
+                "CLiP-tuned", k, m, e_max, df,
                 distribution, size, tuned=True,
             ))
+
+            pbar.update(N_REPEATS)
 
     runs_df = pd.DataFrame.from_records(all_runs)
     summary_df = aggregate_runs(runs_df)
 
     raw_path = os.path.join(output_dir, f"table_experiment_4_d{distribution}_raw_runs.csv")
     summary_path = os.path.join(output_dir, f"table_experiment_4_d{distribution}.csv")
+
     runs_df.to_csv(raw_path, index=False)
     summary_df.to_csv(summary_path, index=False)
+
     print(f"Saved: {raw_path}")
     print(f"Saved: {summary_path}")
 
@@ -278,7 +271,7 @@ if __name__ == "__main__":
     parser.add_argument("-o", type=str, default=".", help="Output directory for result CSVs")
     args = parser.parse_args()
 
-    params_path = os.path.join(os.path.dirname(__file__), "Parameters and results", "experiment_2_params.json")
+    params_path = os.path.join(os.path.dirname(__file__), "Parameters and results", "experiment_4_1_params.json")
     with open(params_path, "r") as f:
         params = json.load(f)
 
