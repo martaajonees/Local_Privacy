@@ -299,7 +299,7 @@ if __name__ == "__main__":
     parser.add_argument("-o", type=str, default=".", help="Output directory for result CSVs")
     args = parser.parse_args()
 
-    params_path = os.path.join(os.path.dirname(__file__), "Parameters and results", "experiment_4_1_params.json")
+    params_path = os.path.join(os.path.dirname(__file__), "Parameters and results", "params_experiment_4.json")
     with open(params_path, "r") as f:
         params = json.load(f)
 

@@ -14,20 +14,23 @@ ALPHA = 0.05
 results = []
 
 for dist, group in df.groupby("distribution"):
-    methods = group["method"].unique()
-
-    m1, m2 = methods
+    m1 = "Apple"
+    m2 = "CLiP-tuned"
 
     pivot = group.pivot_table(
         index=["dataset_size", "repeat"], columns="method", values=METRIC
     )
-    pivot = pivot.dropna(subset=[m1, m2])  # nos quedamos solo con pares completos
+    pivot = pivot.dropna(subset=[m1, m2])
  
     x = pivot[m1]
     y = pivot[m2]
  
     stat, p_value = wilcoxon(x, y, alternative="two-sided", method="approx", zero_method="wilcox")
     z_stat = wilcoxon(x, y, alternative="two-sided", method="approx", zero_method="wilcox").zstatistic
+    if (x - y).mean() > 0:
+        z_stat = abs(z_stat)
+    else:
+        z_stat = -abs(z_stat)
  
     n_pares = len(pivot)
     r_effect_size = abs(z_stat) / (n_pares ** 0.5)
@@ -36,6 +39,8 @@ for dist, group in df.groupby("distribution"):
         "distribution": dist,
         "method_1": m1,
         "method_2": m2,
+        f'Mean {m1}': x.mean(),
+        f'Mean {m2}': y.mean(),
         "W_statistic": stat,
         "Z_statistic": z_stat,
         "p_value": p_value,
