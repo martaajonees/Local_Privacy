@@ -109,6 +109,7 @@ clip_clear
 - Acceptable error range ($l$ as the error value and $t$ as the tolerance) $[l-t,\ l+t]$
 - Number of trials $N_{trials}$
 - Level of privacy (*low* or *high*)
+
 **Ensure:**
 - Optimized privacy budget $\epsilon$
 - Privatized dataset $D'$
